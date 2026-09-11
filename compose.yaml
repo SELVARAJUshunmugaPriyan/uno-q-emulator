@@ -1,0 +1,27 @@
+name: uno-q-emulator
+
+services:
+  mcu:
+    profiles: ["keyword"]
+
+  mpu:
+    build:
+      context: ./mpu
+    platform: linux/arm64
+    ports:
+      - "127.0.0.1:2222:22"
+    tmpfs:
+      - /home/arduino
+
+  runner:
+    image: ${EIM_RUNNER_IMAGE:-ghcr.io/arduino/app-bricks/ei-models-runner:0.13.0rc1}
+    platform: linux/arm64
+    ports:
+      - "127.0.0.1:1340:1337"
+    volumes:
+      - ./models:/models/custom
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:1337/api/info"]
+      interval: 5s
+      timeout: 3s
+      retries: 20

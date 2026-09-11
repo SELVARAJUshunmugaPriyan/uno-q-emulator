@@ -1,0 +1,15 @@
+FROM arm64v8/debian:bookworm-slim
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends openssh-server python3 ca-certificates \
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd -m -s /bin/bash arduino \
+    && echo 'arduino:arduino' | chpasswd \
+    && mkdir -p /run/sshd /home/arduino/.arduino-bricks/ei-models \
+    && chown -R arduino:arduino /home/arduino
+
+COPY keyword-entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh
+EXPOSE 22
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
+

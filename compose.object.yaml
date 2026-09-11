@@ -1,0 +1,27 @@
+services:
+  mpu:
+    build:
+      dockerfile: Dockerfile.object
+    profiles: ["object"]
+    ports:
+      - "127.0.0.1:7000:7000"
+    volumes:
+      - ./app/object-detection:/opt/uno-q/app/object-detection:ro
+    depends_on:
+      runner:
+        condition: service_healthy
+
+  runner:
+    profiles: ["object"]
+    command:
+      - --model-file
+      - ${EIM_MODEL:-/models/custom/object-detection/model.eim}
+      - --run-http-server
+      - "1337"
+      - --dont-print-predictions
+    volumes:
+      - ./runtime/arduino-object/.arduino-bricks:/home/arduino/.arduino-bricks
+    networks:
+      default:
+        aliases:
+          - ei-obj-detection-runner

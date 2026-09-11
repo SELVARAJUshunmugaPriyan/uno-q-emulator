@@ -1,0 +1,35 @@
+services:
+  mcu:
+    build: ./mcu
+    profiles: ["keyword"]
+    ports:
+      - "127.0.0.1:9000:9000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9000/health')"]
+      interval: 3s
+      timeout: 2s
+      retries: 10
+
+  mpu:
+    build:
+      dockerfile: Dockerfile.keyword
+    profiles: ["keyword"]
+    environment:
+      MCU_URL: ${MCU_URL:-http://mcu:9000}
+      KEYWORD_LABEL: ${KEYWORD_LABEL:-hey_dragon}
+    volumes:
+      - ./app/keyword-detection:/opt/uno-q/app:ro
+    depends_on:
+      mcu:
+        condition: service_healthy
+
+  runner:
+    profiles: ["keyword"]
+    command:
+      - --model-file
+      - ${EIM_MODEL:-/models/custom/keyword-detection/model.eim}
+      - --run-http-server
+      - "1337"
+      - --dont-print-predictions
+    volumes:
+      - ./runtime/arduino-keyword/.arduino-bricks:/home/arduino/.arduino-bricks
