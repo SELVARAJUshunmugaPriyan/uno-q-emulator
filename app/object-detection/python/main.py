@@ -11,55 +11,57 @@ from PIL import Image
 import io
 import base64
 import time
+import threading
+from fastapi import HTTPException
+from pydantic import BaseModel, Field
 
 object_detection = ObjectDetection()
+inference_lock = threading.Lock()
+
+
+class DetectionRequest(BaseModel):
+    image: str = Field(min_length=1, max_length=3_000_000)
+    confidence: float = Field(default=0.5, ge=0, le=1)
+
+
+def detect_image(data: DetectionRequest):
+    """Shared REST/Socket.IO inference path. Bound concurrent model requests."""
+    try:
+        image_bytes = base64.b64decode(data.image, validate=True)
+        with Image.open(io.BytesIO(image_bytes)) as source:
+            if source.width * source.height > 16_000_000:
+                raise ValueError("Image exceeds 16 megapixels")
+            pil_image = source.convert("RGB")
+    except Exception as exc:
+        raise HTTPException(400, "Invalid image or image too large") from exc
+    if not inference_lock.acquire(blocking=False):
+        raise HTTPException(429, "Detector busy; wait for the previous result")
+    try:
+        start = time.monotonic()
+        results = object_detection.detect(pil_image, confidence=data.confidence)
+        if results is None:
+            raise HTTPException(502, "Model runner returned no result")
+        annotated = object_detection.draw_bounding_boxes(pil_image, results)
+        output = io.BytesIO()
+        (annotated if annotated is not None else pil_image).save(output, format="PNG")
+        return {
+            "success": True,
+            "result_image": base64.b64encode(output.getvalue()).decode("ascii"),
+            "detection_count": len(results.get("detection", [])),
+            "processing_time": f"{(time.monotonic() - start) * 1000:.2f} ms",
+        }
+    finally:
+        inference_lock.release()
 
 # Define a callback function to handle object detection requests from the UI.
 def on_detect_objects(client_id, data):
     """Callback function to handle object detection requests."""
     try:
-        image_data = data.get('image')             # Get the base64-encoded image data from the message sent by the UI
-        confidence = data.get('confidence', 0.5)   # Get the confidence threshold from the message, or use a default value of 0.5 if not provided
-        if not image_data:
-            ui.send_message('detection_error', {'error': 'No image data'})
-            return
-
-        image_bytes = base64.b64decode(image_data)
-        pil_image = Image.open(io.BytesIO(image_bytes))
-
-        start_time = time.time() * 1000
-        results = object_detection.detect(pil_image, confidence=confidence)  # Perform object detection on the input image with the specified confidence threshold
-        diff = time.time() * 1000 - start_time
-
-        if results is None:
-            ui.send_message('detection_error', {'error': 'No results returned'})
-            return
-
-        img_with_boxes = object_detection.draw_bounding_boxes(pil_image, results) # Draw bounding boxes around the detected objects in the input image
-
-        # Convert the resulting image with bounding boxes back to base64 to send it back to the UI
-        if img_with_boxes is not None:
-            img_buffer = io.BytesIO()
-            img_with_boxes.save(img_buffer, format="PNG")
-            img_buffer.seek(0)
-            b64_result = base64.b64encode(img_buffer.getvalue()).decode("utf-8")
-        else:
-            img_buffer = io.BytesIO()
-            pil_image.save(img_buffer, format="PNG")
-            img_buffer.seek(0)
-            b64_result = base64.b64encode(img_buffer.getvalue()).decode("utf-8")
-
-        # Prepare the response with the detection results
-        response = {
-            'success': True,
-            'result_image': b64_result,
-            'detection_count': len(results.get("detection", [])) if results else 0,
-            'processing_time': f"{diff:.2f} ms"
-        }
-        ui.send_message('detection_result', response)
+        response = detect_image(DetectionRequest(**data))
+        ui.send_message('detection_result', response, room=client_id)
 
     except Exception as e:
-        ui.send_message('detection_error', {'error': str(e)})
+        ui.send_message('detection_error', {'error': str(e)}, room=client_id)
 
 ui = WebUI(
     addr="0.0.0.0",
@@ -68,5 +70,7 @@ ui = WebUI(
 )
 
 ui.on_message('detect_objects', on_detect_objects)
+ui.expose_api("POST", "/api/detect", detect_image)
 
-App.run()
+if __name__ == "__main__":
+    App.run()

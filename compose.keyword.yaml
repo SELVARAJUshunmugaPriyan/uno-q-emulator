@@ -17,10 +17,18 @@ services:
     environment:
       MCU_URL: ${MCU_URL:-http://mcu:9000}
       KEYWORD_LABEL: ${KEYWORD_LABEL:-hey_dragon}
+      KEYWORD_THRESHOLD: ${KEYWORD_THRESHOLD:-0.5}
+      KEYWORD_COOLDOWN_SECONDS: ${KEYWORD_COOLDOWN_SECONDS:-2}
+      KEYWORD_RUNNER_URL: http://runner:1337
+      KEYWORD_PORT: 9200
+    ports:
+      - "${KEYWORD_BIND_ADDRESS:-0.0.0.0}:${KEYWORD_PORT:-9200}:9200"
     volumes:
       - ./app/keyword-detection:/opt/uno-q/app:ro
     depends_on:
       mcu:
+        condition: service_healthy
+      runner:
         condition: service_healthy
 
   runner:

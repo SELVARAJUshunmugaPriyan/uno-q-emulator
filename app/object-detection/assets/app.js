@@ -5,6 +5,10 @@
 let currentImage = null;
 let resultImage = null;
 let cameraStream = null;
+let liveDetection = false;
+let liveGeneration = 0;
+let detectionPending = false;
+let pendingRequest = null;
 
 let errorContainer;
 
@@ -28,6 +32,7 @@ function onUiConnected() {
 }
 
 function onUIDisconnected() {
+  stopLiveDetection();
   if (errorContainer) {
     errorContainer.textContent = 'Connection to the board lost. Please check the connection.';
     errorContainer.style.display = 'block';
@@ -104,6 +109,8 @@ function initializeElements() {
   startCameraButton.addEventListener('click', startCamera);
   captureButton.addEventListener('click', captureCameraFrame);
   stopCameraButton.addEventListener('click', stopCamera);
+  document.getElementById('startLiveButton').addEventListener('click', startLiveDetection);
+  document.getElementById('stopLiveButton').addEventListener('click', stopLiveDetection);
   setButtonState('initial');
 
   const confidencePopoverText =
@@ -223,6 +230,7 @@ function handleConfidenceInputChange() {
 }
 
 function captureCameraFrame() {
+  if (detectionPending || liveDetection) return;
   const video = document.getElementById('cameraPreview');
   const canvas = document.getElementById('captureCanvas');
 
@@ -260,12 +268,14 @@ async function startCamera() {
       video: { facingMode: 'user' },
       audio: false,
     });
+    cameraStream.getVideoTracks().forEach(track => track.addEventListener('ended', stopCamera));
 
     const video = document.getElementById('cameraPreview');
     video.srcObject = cameraStream;
     video.style.display = 'block';
     document.getElementById('startCameraButton').style.display = 'none';
     document.getElementById('captureButton').style.display = 'inline-flex';
+    document.getElementById('startLiveButton').style.display = 'inline-flex';
     document.getElementById('stopCameraButton').style.display = 'inline-flex';
     cameraStatus.textContent = 'Webcam ready. Capture a frame to detect objects.';
     clearStatus();
@@ -277,6 +287,7 @@ async function startCamera() {
 }
 
 function stopCamera() {
+  stopLiveDetection();
   if (cameraStream) {
     cameraStream.getTracks().forEach(track => track.stop());
     cameraStream = null;
@@ -293,10 +304,86 @@ function stopCamera() {
     video.style.display = 'none';
   }
   if (startButton) startButton.style.display = 'inline-flex';
+  document.getElementById('startLiveButton').style.display = 'none';
   if (captureButton) captureButton.style.display = 'none';
   if (stopButton) stopButton.style.display = 'none';
   if (cameraStatus) cameraStatus.textContent = '';
 }
+
+function stopLiveDetection() {
+  liveDetection = false;
+  liveGeneration += 1;
+  document.getElementById('stopLiveButton').style.display = 'none';
+  document.getElementById('startLiveButton').style.display = cameraStream ? 'inline-flex' : 'none';
+  document.getElementById('captureButton').disabled = false;
+  if (cameraStream) document.getElementById('cameraStatus').textContent = 'Live detection stopped.';
+}
+
+async function startLiveDetection() {
+  if (!cameraStream || liveDetection || detectionPending) return;
+  liveDetection = true;
+  const generation = ++liveGeneration;
+  document.getElementById('startLiveButton').style.display = 'none';
+  document.getElementById('stopLiveButton').style.display = 'inline-flex';
+  document.getElementById('captureButton').disabled = true;
+  try {
+    while (liveDetection && generation === liveGeneration && cameraStream) {
+      const video = document.getElementById('cameraPreview');
+      if (video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA || !video.videoWidth) {
+        await new Promise(resolve => setTimeout(resolve, 100));
+        continue;
+      }
+      const canvas = document.getElementById('captureCanvas');
+      const scale = Math.min(1, 640 / video.videoWidth);
+      canvas.width = Math.round(video.videoWidth * scale);
+      canvas.height = Math.round(video.videoHeight * scale);
+      canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
+      const image = canvas.toDataURL('image/jpeg', 0.8).split(',')[1];
+      currentImage = image;
+      const result = await requestDetection(image);
+      if (!liveDetection || generation !== liveGeneration) break;
+      handleDetectionResult(result);
+      document.getElementById('cameraStatus').textContent =
+        `Live: ${result.detection_count} objects · ${result.processing_time}`;
+      // One frame in flight; the runner's speed determines the effective frame rate.
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+  } catch (error) {
+    if (generation === liveGeneration) showError(`Live detection stopped: ${error.message}`);
+  } finally {
+    if (generation === liveGeneration) stopLiveDetection();
+  }
+}
+
+async function requestDetection(image) {
+  if (detectionPending) throw new Error('A detection request is already running');
+  detectionPending = true;
+  document.getElementById('startLiveButton').disabled = true;
+  const controller = new AbortController();
+  pendingRequest = controller;
+  const timer = setTimeout(() => controller.abort(), 30000);
+  try {
+    const response = await fetch('/api/detect', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ image, confidence: Number(document.getElementById('confidenceSlider').value) }),
+      signal: controller.signal,
+    });
+    const result = await response.json();
+    if (!response.ok) throw new Error(typeof result.detail === 'string' ? result.detail : `HTTP ${response.status}`);
+    return result;
+  } finally {
+    clearTimeout(timer);
+    detectionPending = false;
+    document.getElementById('startLiveButton').disabled = false;
+    pendingRequest = null;
+  }
+}
+
+window.addEventListener('pagehide', () => {
+  stopCamera();
+  if (pendingRequest) pendingRequest.abort();
+});
 
 function validateConfidenceInput() {
   const confidenceInput = document.getElementById('confidenceInput');
@@ -350,6 +437,7 @@ function handleImageUpload(event) {
 }
 
 function handleImageFile(file) {
+  stopLiveDetection();
   if (!file.type.startsWith('image/')) {
     showError('Please select a valid image file');
     return;
@@ -365,7 +453,13 @@ function handleImageFile(file) {
 function setCurrentImage(dataUrl) {
   currentImage = dataUrl.split(',')[1];
 
-  const imagePreview = document.getElementById('imagePreview');
+  let imagePreview = document.getElementById('imagePreview');
+  if (!imagePreview) {
+    imagePreview = document.createElement('div');
+    imagePreview.id = 'imagePreview';
+    imagePreview.className = 'image-preview';
+    document.querySelector('.image-container').replaceChildren(imagePreview);
+  }
   imagePreview.innerHTML = `<img src="${dataUrl}" alt="Selected image" class="preview-image">`;
   imagePreview.style.border = 'none';
 
@@ -373,26 +467,27 @@ function setCurrentImage(dataUrl) {
   clearStatus();
 }
 
-function runDetection() {
+async function runDetection() {
+  if (liveDetection || detectionPending) return;
   setButtonState('detecting');
   showStatus('Running object detection...', 'info');
   showResultTitle();
-  sendDetectionRequest();
+  await sendDetectionRequest();
 }
 
-function sendDetectionRequest() {
+async function sendDetectionRequest() {
   if (!currentImage) {
     showError('No image available for detection');
     setButtonState('ready');
     return;
   }
 
-  const confidence = parseFloat(document.getElementById('confidenceSlider').value);
-
-  ui.send_message('detect_objects', {
-    image: currentImage,
-    confidence: confidence,
-  });
+  try {
+    handleDetectionResult(await requestDetection(currentImage));
+  } catch (error) {
+    showError(`Object detection failed: ${error.message}`);
+    setButtonState('ready');
+  }
 }
 
 function displayImage(imageSrc, container) {

@@ -1,0 +1,9 @@
+name: gesture_recognition_1-3
+description: Custom Gesture Recognition
+ports: []
+bricks:
+- arduino:motion_detection:
+    model: updown-wave-motion-motion_detection
+    variables: {
+      EI_MOTION_DETECTION_MODEL: /home/arduino/.arduino-bricks/ei-models/gesture_recognition_beg-1_v2-linux-aarch64-v2_data_collection.elm
+    }

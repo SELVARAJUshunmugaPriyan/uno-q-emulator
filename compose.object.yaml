@@ -4,7 +4,7 @@ services:
       dockerfile: Dockerfile.object
     profiles: ["object"]
     ports:
-      - "127.0.0.1:7000:7000"
+      - "0.0.0.0:7000:7000"
     volumes:
       - ./app/object-detection:/opt/uno-q/app/object-detection:ro
     depends_on:

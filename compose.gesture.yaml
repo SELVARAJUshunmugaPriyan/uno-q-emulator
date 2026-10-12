@@ -1,0 +1,50 @@
+services:
+  gesture:
+    build:
+      context: .
+      dockerfile: mpu/Dockerfile.gesture
+    platform: linux/arm64
+    profiles: ["gesture"]
+    ports:
+      - "${GESTURE_BIND_ADDRESS:-0.0.0.0}:${GESTURE_PORT:-9100}:9100"
+    environment:
+      GESTURE_HOST: 0.0.0.0
+      GESTURE_PORT: 9100
+      GESTURE_MODE: ${GESTURE_MODE:-collection}
+      GESTURE_LABEL: ${GESTURE_LABEL:-idle}
+      GESTURE_MODEL: "${EIM_MODEL:-/models/custom/gesture-recognition/gesture_recognition_1_3-linux-aarch64-v2-impulse-#1.eim}"
+      GESTURE_DETECTION_SCALE: ${GESTURE_DETECTION_SCALE:-1.0}
+      GESTURE_CONFIDENCE: ${GESTURE_CONFIDENCE:-0.1}
+      GESTURE_WINDOW_SIZE: ${GESTURE_WINDOW_SIZE:-200}
+      GESTURE_QUEUE_SIZE: ${GESTURE_QUEUE_SIZE:-1000}
+      GESTURE_DATA_DIR: /opt/uno-q/app/gesture-recognition/python/data
+      GESTURE_IDLE_X: ${GESTURE_IDLE_X:-0.0}
+      GESTURE_IDLE_Y: ${GESTURE_IDLE_Y:-0.0}
+      GESTURE_IDLE_Z: ${GESTURE_IDLE_Z:-0.0}
+      GESTURE_SCALE_X: ${GESTURE_SCALE_X:-0.01}
+      GESTURE_SCALE_Y: ${GESTURE_SCALE_Y:-0.01}
+      GESTURE_SCALE_Z: ${GESTURE_SCALE_Z:-0.01}
+      GESTURE_MIN_VALUE: ${GESTURE_MIN_VALUE:--4.0}
+      GESTURE_MAX_VALUE: ${GESTURE_MAX_VALUE:-4.0}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      PYTHONUNBUFFERED: "1"
+    volumes:
+      - ./app/gesture-recognition/python/data:/opt/uno-q/app/gesture-recognition/python/data
+    depends_on:
+      runner:
+        condition: service_healthy
+
+  runner:
+    profiles: ["gesture"]
+    command:
+      - --model-file
+      - "${EIM_MODEL:-/models/custom/gesture-recognition/gesture_recognition_1_3-linux-aarch64-v2-impulse-#1.eim}"
+      - --run-http-server
+      - "1337"
+      - --dont-print-predictions
+    volumes:
+      - ./runtime/arduino-gesture/.arduino-bricks:/home/arduino/.arduino-bricks
+    networks:
+      default:
+        aliases:
+          - ei-motion-detection-runner

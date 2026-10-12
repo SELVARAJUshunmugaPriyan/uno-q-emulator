@@ -1,6 +1,6 @@
 # Deployment and exercise workflow
 
-This guide covers the two profile-based exercises in `uno-q-emulator`. The
+This guide covers the profile-based exercises in `uno-q-emulator`. The
 emulator is a development/preflight environment; final validation belongs on
 the Arduino UNO Q.
 
@@ -18,19 +18,30 @@ Keep keyword models in `models/keyword-detection/` and object models in
 
 ## Keyword exercise
 
-After editing the course source in `~/app-bricks-examples`, copy its Python
-entry point into `app/keyword-detection/python/main.py`:
+The keyword MPU runs the live HTTP service in
+`app/keyword-detection/python/main.py`. Keep this entrypoint when using the
+Windows microphone client:
 
 ```bash
-cp ~/app-bricks-examples/inspirational/common/keyword-spotting/python/main.py \
-   app/keyword-detection/python/main.py
 make keyword-down
 make keyword-up
+make keyword-health
 make keyword-test-wav WAV='sample/hey_dragon.65d472ba.s2.wav'
 ```
 
 Use `make keyword-info` to read the model labels and keep the Python label
 exactly matched. The simulated MCU contract is `keyword_detected`.
+
+In Windows PowerShell, from the repository root:
+
+```powershell
+py -3.11 -m pip install sounddevice
+py -3.11 scripts/windows_microphone_client.py --endpoint http://<WSL-IP>:9200
+```
+
+Press `s` to start capturing, `d` to disconnect, and `q` to quit. If the model
+uses a different keyword label, set `KEYWORD_LABEL` when starting the services.
+Both runner and MCU must be healthy before the keyword MPU starts.
 
 ## Object exercise
 
@@ -45,9 +56,11 @@ make object-up
 make object-web-check
 ```
 
-Open <http://127.0.0.1:7000/>. The browser can upload an image or capture a host
-webcam frame with `getUserMedia()`. A Base64 JPEG is sent over Socket.IO and
-processed by `ObjectDetection`. `main.py` must use:
+Open <http://127.0.0.1:7000/> in the Windows browser. Choose **Use webcam** and
+**Start live detection**. The browser sends successive Base64 JPEGs via HTTP
+`POST /api/detect`, waiting for each result before sending another frame.
+Single-frame capture and image upload are also available. `ObjectDetection`
+performs inference via the runner. `main.py` must use:
 
 ```python
 WebUI(assets_dir_path="/opt/uno-q/app/object-detection/assets")

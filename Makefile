@@ -11,14 +11,24 @@ KEYWORD_COMPOSE = $(COMPOSE) \
 	--profile keyword
 OBJECT_MODEL ?= $(firstword $(wildcard models/object-detection/*.eim))
 KEYWORD_MODEL ?= $(firstword $(wildcard models/keyword-detection/*.eim))
+GESTURE_BUILD ?=
+GESTURE_MODE ?= collection
+GESTURE_MODEL ?= $(firstword $(wildcard models/gesture-recognition/*.eim))
+GESTURE_COMPOSE = $(COMPOSE) \
+	-p uno-q-gesture \
+	-f compose.yaml \
+	-f compose.gesture.yaml \
+	--profile gesture
 
 .PHONY: init doctor ssh runner runner-info \
 		keyword-up keyword-down keyword-logs keyword-bridge-test \
 		keyword-test-wav keyword-test-samples keyword-model-check keyword-runner \
-		keyword-info \
+		keyword-info keyword-health keyword-status \
 		object-build object-up object-down object-restart object-logs \
 		object-shell object-web-check object-import-check object-model-check \
-		object-model-info object-runner 
+		object-model-info object-runner \
+		gesture-build gesture-up gesture-down gesture-logs gesture-health gesture-status \
+		gesture-model-check gesture-model-info gesture-runner
 
 init:
 	@mkdir -p models
@@ -36,9 +46,9 @@ init:
 doctor:
 	@./scripts/doctor.sh
 
-keyword-up: init
-	@$(KEYWORD_COMPOSE) up --build -d mcu mpu
-	@$(MAKE) keyword-runner
+keyword-up: init keyword-model-check
+	@EIM_MODEL="/models/custom/keyword-detection/$(notdir $(KEYWORD_MODEL))" \
+		$(KEYWORD_COMPOSE) up --build -d mcu runner mpu
 
 keyword-down:
 	@$(KEYWORD_COMPOSE) down -v
@@ -76,6 +86,14 @@ keyword-runner: init keyword-model-check
 
 keyword-info:
 	@curl -fsS http://127.0.0.1:1340/api/info
+	@echo
+
+keyword-health:
+	@curl -fsS http://127.0.0.1:$${KEYWORD_PORT:-9200}/health
+	@echo
+
+keyword-status:
+	@curl -fsS http://127.0.0.1:$${KEYWORD_PORT:-9200}/v1/status
 	@echo
 
 object-model-check:
@@ -137,3 +155,51 @@ runner-info:
 
 ssh:
 	ssh -o StrictHostKeyChecking=no -p 2222 arduino@127.0.0.1
+
+gesture-build:
+	@$(GESTURE_COMPOSE) build gesture
+
+gesture-up: $(if $(filter detection,$(GESTURE_MODE)),gesture-model-check)
+	@mkdir -p app/gesture-recognition/python/data
+	@case "$(GESTURE_MODE)" in \
+		collection) \
+			GESTURE_MODE=collection $(GESTURE_COMPOSE) up $(GESTURE_BUILD) --no-deps -d gesture ;; \
+		detection) \
+			mkdir -p runtime/arduino-gesture/.arduino-bricks && \
+			EIM_MODEL="/models/custom/gesture-recognition/$(notdir $(GESTURE_MODEL))" \
+			GESTURE_MODE=detection $(GESTURE_COMPOSE) up $(GESTURE_BUILD) -d gesture runner ;; \
+		*) echo "GESTURE_MODE must be collection or detection" >&2; exit 2 ;; \
+	esac
+
+gesture-model-check:
+	@test -n "$(GESTURE_MODEL)" && test -f "$(GESTURE_MODEL)" || \
+		(echo "Place a .eim model in models/gesture-recognition/ or set GESTURE_MODEL." >&2; exit 1)
+	@case "$(GESTURE_MODEL)" in models/gesture-recognition/*.eim) ;; \
+		*) echo "GESTURE_MODEL must be inside models/gesture-recognition/." >&2; exit 1 ;; esac
+	@echo "Gesture model: $(GESTURE_MODEL)"
+
+gesture-runner: gesture-model-check
+	@mkdir -p runtime/arduino-gesture/.arduino-bricks
+	@COMPOSE_FILE=compose.yaml:compose.gesture.yaml \
+		COMPOSE_PROJECT_NAME=uno-q-gesture \
+		COMPOSE_PROFILES=gesture \
+		RUNNER_SERVICE=runner \
+		./scripts/run-model.sh "$(GESTURE_MODEL)"
+
+gesture-model-info:
+	@curl -fsS http://127.0.0.1:1340/api/info
+	@echo
+
+gesture-down:
+	@$(GESTURE_COMPOSE) down -v
+
+gesture-logs:
+	@$(GESTURE_COMPOSE) logs -f gesture runner
+
+gesture-health:
+	@curl -fsS http://127.0.0.1:$${GESTURE_PORT:-9100}/health
+	@echo
+
+gesture-status:
+	@curl -fsS http://127.0.0.1:$${GESTURE_PORT:-9100}/v1/status
+	@echo

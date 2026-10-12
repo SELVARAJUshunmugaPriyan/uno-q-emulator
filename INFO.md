@@ -10,10 +10,11 @@ emulator.
 | `.eim` loading/inference | High | Real Arduino runner and model artifact |
 | Model metadata/labels | High | Runner `/api/info` response |
 | Keyword WAV inference | High | Same PCM contract, offline input |
+| Live keyword input | Medium | Windows microphone, overlapping PCM windows over HTTP |
 | Object image inference | High | Same runner and image contract |
 | ARM64 execution | Medium | Docker/QEMU, not board silicon |
 | Python/App Bricks logic | Medium–High | Container runtime and application code |
-| Browser/WebUI messaging | Medium–High | FastAPI/Socket.IO over localhost |
+| Browser/WebUI messaging | Medium–High | FastAPI REST; legacy Socket.IO also available |
 | Browser webcam capture | Medium | Host browser camera, not UNO Q camera |
 | MPU hardware/software stack | Low | Debian container replaces board image |
 | Bridge/MCU transport | Low | HTTP simulator replaces Router Bridge/STM32 |
@@ -23,14 +24,20 @@ emulator.
 ## Keyword limitations
 
 WAV tests bypass live ALSA/PipeWire capture, USB permissions, clock drift,
-rolling windows, buffering, debounce, and callback scheduling. The MCU endpoint
-and LED heart are simulators; no STM32 sketch or physical LED library runs.
+rolling windows, buffering, debounce, and callback scheduling. The separate
+Windows microphone client adds host audio capture with 50% overlapping model
+windows, a bounded queue, and start/stop controls. The MPU service applies a
+configurable notification cooldown. This does not validate the UNO Q's audio
+drivers or timing. The MCU endpoint and LED heart remain simulators; no STM32
+sketch or physical LED library runs.
 
 ## Object limitations
 
-The browser uploads or captures an image, sends it as Base64 over Socket.IO, and
-the MPU returns an annotated image. Webcam mode uses the Windows/WSL browser
-camera. It does not validate UNO Q camera drivers, V4L2 discovery, exposure,
+The browser uploads or captures an image, sends it as Base64 via HTTP, and
+the MPU returns an annotated image. Live mode repeatedly captures frames with
+one inference request in flight. Webcam mode uses the Windows/WSL browser
+camera. Frame rate depends on inference and network latency. It does not
+validate UNO Q camera drivers, V4L2 discovery, exposure,
 autofocus, USB bandwidth, or board-camera latency.
 
 ## Validated here
@@ -40,6 +47,10 @@ autofocus, USB bandwidth, or board-camera latency.
 - Python-to-WebUI and Python-to-Bridge message contracts.
 - Browser webcam-to-inference flow.
 - Repeatable Compose profile startup.
+
+Live-client regression tests use simulated inference responses and camera/audio
+input. Actual Windows microphone/webcam behavior and model accuracy still need
+hardware testing after deployment.
 
 ## Required on a real UNO Q
 
